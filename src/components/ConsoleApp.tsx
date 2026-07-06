@@ -947,7 +947,7 @@ export function ConsoleApp({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+        <div className="app-scrollbar-none min-h-0 flex-1 overflow-y-auto p-2">
           {conversations.length === 0 ? (
             <div className="px-2 py-4 text-xs leading-5 text-zinc-400">暂无会话</div>
           ) : (
@@ -1018,7 +1018,7 @@ export function ConsoleApp({
   );
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-[#f7f7f5] text-zinc-950">
+    <div className="fixed inset-0 flex overflow-hidden bg-[#f7f7f5] text-zinc-950">
       <aside className="hidden w-72 shrink-0 border-r border-zinc-200 bg-[#fbfbfa] p-3 lg:flex lg:flex-col">
         <button
           type="button"
@@ -1036,7 +1036,7 @@ export function ConsoleApp({
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          <div className="app-scrollbar-none min-h-0 flex-1 overflow-y-auto p-2">
             {conversations.length === 0 ? (
               <div className="px-2 py-4 text-xs leading-5 text-zinc-400">暂无会话</div>
             ) : (
@@ -1185,7 +1185,7 @@ export function ConsoleApp({
           </div>
         </header>
 
-        <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6">
+        <div ref={scrollRef} className="app-scrollbar-none relative min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6">
           <div className="mx-auto flex max-w-4xl flex-col gap-4">
             {messages.map((message) => {
               const messageTime = formatMessageTime(message.createdAt);
