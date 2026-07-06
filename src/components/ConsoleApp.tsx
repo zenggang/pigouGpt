@@ -1137,7 +1137,7 @@ export function ConsoleApp({
         </div>
       )}
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 bg-white/80 px-3 backdrop-blur sm:px-4">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             <button
@@ -1185,7 +1185,7 @@ export function ConsoleApp({
           </div>
         </header>
 
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6">
+        <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6">
           <div className="mx-auto flex max-w-4xl flex-col gap-4">
             {messages.map((message) => {
               const messageTime = formatMessageTime(message.createdAt);
@@ -1202,7 +1202,7 @@ export function ConsoleApp({
                   }
                 >
                 {message.role === "assistant" && (
-                  <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="mb-3 flex items-center gap-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-zinc-500">
                       <Bot size={14} />
                       <span>Assistant</span>
@@ -1214,28 +1214,6 @@ export function ConsoleApp({
                       )}
                       {isRunningMessage(message) && (
                         <Loader2 size={13} className="animate-spin text-zinc-400" />
-                      )}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1 opacity-80 transition group-hover:opacity-100">
-                      <button
-                        type="button"
-                        onClick={() => copyMessage(message)}
-                        className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-950"
-                        aria-label="复制回答"
-                      >
-                        {copiedMessageId === message.id ? <Check size={13} /> : <Copy size={13} />}
-                        {copiedMessageId === message.id ? "已复制" : "复制"}
-                      </button>
-                      {canDeleteMessage && (
-                        <button
-                          type="button"
-                          onClick={() => setDeleteMessageTarget({ conversationId, message })}
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition hover:bg-red-50 hover:text-red-600"
-                          aria-label="删除消息"
-                          title="删除消息"
-                        >
-                          <Trash2 size={13} />
-                        </button>
                       )}
                     </div>
                   </div>
@@ -1288,9 +1266,6 @@ export function ConsoleApp({
                       title="复制消息"
                     >
                       {copiedMessageId === message.id ? <Check size={12} /> : <Copy size={12} />}
-                      <span className="sr-only">
-                        {copiedMessageId === message.id ? "已复制" : "复制"}
-                      </span>
                     </button>
                     {canDeleteMessage && (
                       <button
@@ -1354,6 +1329,32 @@ export function ConsoleApp({
                 {message.error && (
                   <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
                     {message.error}
+                  </div>
+                )}
+
+                {message.role === "assistant" && (
+                  <div className="mt-3 flex items-center justify-end gap-1 border-t border-zinc-100 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => copyMessage(message)}
+                      className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-950"
+                      aria-label="复制回答"
+                      title="复制回答"
+                    >
+                      {copiedMessageId === message.id ? <Check size={13} /> : <Copy size={13} />}
+                      {copiedMessageId === message.id ? "已复制" : "复制"}
+                    </button>
+                    {canDeleteMessage && (
+                      <button
+                        type="button"
+                        onClick={() => setDeleteMessageTarget({ conversationId, message })}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 transition hover:bg-red-50 hover:text-red-600"
+                        aria-label="删除消息"
+                        title="删除消息"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
                   </div>
                 )}
               </article>
@@ -1433,7 +1434,7 @@ export function ConsoleApp({
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="relative flex items-center gap-2">
                   <label className="sr-only" htmlFor="model-select">
                     模型
                   </label>
