@@ -1,0 +1,13 @@
+{
+  "name": "pigou-db-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "mysql2": "^3.14.3"
+  }
+}

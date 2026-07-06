@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f7f5;
+  --foreground: #18181b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "Geist", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+}
+
+button,
+textarea,
+select {
+  font: inherit;
+}
+
+button:not(:disabled),
+a[href],
+select:not(:disabled),
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: #27272a;
+  color: #ffffff;
+}
+
+@keyframes pigou-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(50%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
+.markdown-body {
+  overflow-wrap: anywhere;
+}
+
+.markdown-body table {
+  margin: 1rem 0;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid #e4e4e7;
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+}
+
+.markdown-body blockquote {
+  margin: 0.75rem 0;
+  border-left: 3px solid #d4d4d8;
+  padding-left: 0.875rem;
+  color: #52525b;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in {
+  color: #c084fc;
+}
+
+.hljs-string,
+.hljs-attr {
+  color: #86efac;
+}
+
+.hljs-number,
+.hljs-literal {
+  color: #fbbf24;
+}
+
+.hljs-comment {
+  color: #a1a1aa;
+}
