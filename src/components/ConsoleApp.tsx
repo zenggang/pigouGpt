@@ -2373,7 +2373,7 @@ function imageSource(image: GeneratedImage) {
 }
 
 function attachmentSource(attachment: ClientImageAttachment) {
-  return `data:${attachment.mimeType};base64,${attachment.base64 ?? ""}`;
+  return attachment.url ?? `data:${attachment.mimeType};base64,${attachment.base64 ?? ""}`;
 }
 
 function readFileAsDataUrl(file: File) {

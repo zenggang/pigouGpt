@@ -9,6 +9,7 @@
     "lint": "eslint",
     "verify:image-attachments": "node scripts/verify-image-attachments.mjs",
     "verify:attachment-ui": "node scripts/verify-attachment-ui-source.mjs",
+    "verify:persisted-attachments": "node scripts/verify-persisted-attachments.mjs",
     "db:setup": "node scripts/setup-db.mjs"
   },
   "dependencies": {

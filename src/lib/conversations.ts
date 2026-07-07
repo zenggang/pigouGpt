@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { RowDataPacket } from "mysql2/promise";
+import type { ClientImageAttachment } from "./image-attachments";
 import type {
   ChatMode,
   GeneratedImage,
@@ -18,6 +19,7 @@ export type StoredMessage = {
   createdAt?: string;
   thinking?: string | null;
   images?: GeneratedImage[];
+  attachments?: ClientImageAttachment[];
   usage?: UsageSummary;
   status?: "running" | "done" | "error";
   error?: string | null;
@@ -166,7 +168,8 @@ export async function listConversationMessages(
       content: row.content,
       createdAt: normalizeMysqlDateTime(row.created_at),
       thinking: row.thinking,
-      images: parseJson<GeneratedImage[]>(row.images_json, []),
+      images: row.role === "assistant" ? parseJson<GeneratedImage[]>(row.images_json, []) : [],
+      attachments: row.role === "user" ? parseJson<ClientImageAttachment[]>(row.images_json, []) : [],
       usage:
         imageJobDurationMs === null ? usage : withUsageDuration(usage, imageJobDurationMs),
       status: row.status,
@@ -233,12 +236,22 @@ export async function saveUserMessage(params: {
   content: string;
   model: PigouModel;
   mode: ChatMode;
+  attachments?: ClientImageAttachment[];
 }) {
   await execute(
-    `insert into messages (id, conversation_id, user_id, role, content, status)
-     values (?, ?, ?, 'user', ?, 'done')
-     on duplicate key update content = values(content), status = 'done'`,
-    [params.id, params.conversationId, params.userId, params.content],
+    `insert into messages (id, conversation_id, user_id, role, content, images_json, status)
+     values (?, ?, ?, 'user', ?, ?, 'done')
+     on duplicate key update
+       content = values(content),
+       images_json = values(images_json),
+       status = 'done'`,
+    [
+      params.id,
+      params.conversationId,
+      params.userId,
+      params.content,
+      JSON.stringify(params.attachments ?? []),
+    ],
   );
 
   await touchConversation(params.conversationId, {

@@ -14,6 +14,12 @@ const sub2apiBaseUrl = process.env.SUB2API_BASE_URL?.replace(/\/+$/, "");
 const sub2apiKey = process.env.SUB2API_KEY;
 const mysqlDatabase = process.env.MYSQL_DATABASE;
 const runningImageJobs = new Set();
+const imageMimeTypes = new Map([
+  ["image/png", { extension: "png", expressType: "png" }],
+  ["image/jpeg", { extension: "jpg", expressType: "jpeg" }],
+  ["image/webp", { extension: "webp", expressType: "webp" }],
+  ["image/gif", { extension: "gif", expressType: "gif" }],
+]);
 
 if (!apiKey) {
   throw new Error("PIGOU_DB_API_KEY is required");
@@ -53,7 +59,8 @@ app.post("/images", express.json({ limit: "8mb" }), async (req, res) => {
   }
 
   const { mimeType, base64 } = req.body ?? {};
-  if (mimeType !== "image/png" || typeof base64 !== "string" || !base64) {
+  const imageType = imageMimeTypes.get(mimeType);
+  if (!imageType || typeof base64 !== "string" || !base64) {
     res.status(400).json({ message: "Invalid image payload" });
     return;
   }
@@ -66,10 +73,12 @@ app.post("/images", express.json({ limit: "8mb" }), async (req, res) => {
 
   try {
     await mkdir(imageDir, { recursive: true });
-    const fileName = `${randomUUID()}.png`;
+    const fileName = `${randomUUID()}.${imageType.extension}`;
     await writeFile(join(imageDir, fileName), imageBuffer, { flag: "wx" });
+    const path = `/images/${fileName}`;
     res.status(201).json({
-      path: `/images/${fileName}`,
+      path,
+      url: publicBaseUrl ? `${publicBaseUrl}${path}` : undefined,
       fileName,
       mimeType,
       size: imageBuffer.length,
@@ -82,13 +91,15 @@ app.post("/images", express.json({ limit: "8mb" }), async (req, res) => {
 
 app.get("/images/:fileName", (req, res) => {
   const fileName = String(req.params.fileName ?? "");
-  if (!/^[0-9a-f-]{36}\.png$/i.test(fileName)) {
+  const match = fileName.match(/^[0-9a-f-]{36}\.(png|jpg|webp|gif)$/i);
+  if (!match) {
     res.status(404).end();
     return;
   }
 
+  const extension = match[1].toLowerCase();
   res
-    .type("png")
+    .type(extension === "jpg" ? "jpeg" : extension)
     .set("Cache-Control", "public, max-age=31536000, immutable")
     .sendFile(join(imageDir, fileName));
 });

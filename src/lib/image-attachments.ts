@@ -16,6 +16,7 @@ export type ClientImageAttachment = {
   mimeType: SupportedImageMimeType;
   size: number;
   base64?: string;
+  url?: string;
 };
 
 export type InputTextPart = {

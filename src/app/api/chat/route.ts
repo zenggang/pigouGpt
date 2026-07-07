@@ -11,6 +11,7 @@ import {
   saveUserMessage,
 } from "@/lib/conversations";
 import { createImageJob } from "@/lib/image-jobs";
+import { persistUserImageAttachments } from "@/lib/image-storage";
 import { extractVisibleThinkingFromContent } from "@/lib/thinking";
 
 export const runtime = "nodejs";
@@ -58,6 +59,7 @@ export async function POST(request: Request) {
     if (!latestUserMessage) {
       return Response.json({ message: "请输入问题后再发送。" }, { status: 400 });
     }
+    const persistedAttachments = await persistUserImageAttachments(latestUserMessage.attachments ?? []);
     await saveUserMessage({
       id: latestUserMessage.id,
       userId: user.id,
@@ -65,6 +67,7 @@ export async function POST(request: Request) {
       content: latestUserMessage.content,
       model: chatRequest.model,
       mode: chatRequest.mode,
+      attachments: persistedAttachments,
     });
   } catch (error) {
     if (error instanceof AuthRequiredError) {
