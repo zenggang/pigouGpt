@@ -7,6 +7,7 @@ import {
   Download,
   ExternalLink,
   Globe2,
+  ImagePlus,
   Loader2,
   LogOut,
   PanelLeft,
@@ -22,6 +23,13 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_CONVERSATION_TITLE, summarizeConversationTitle } from "@/lib/conversation-title";
+import {
+  MAX_IMAGE_ATTACHMENTS,
+  MAX_IMAGE_ATTACHMENT_BYTES,
+  SUPPORTED_IMAGE_MIME_TYPES,
+  isSupportedImageMimeType,
+  type ClientImageAttachment,
+} from "@/lib/image-attachments";
 import { extractVisibleThinkingFromContent } from "@/lib/thinking";
 import { BrandMark } from "./BrandMark";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -54,6 +62,7 @@ type Message = {
   rawContent?: string;
   thinking?: string | null;
   images?: GeneratedImage[];
+  attachments?: ClientImageAttachment[];
   usage?: Usage;
   durationMs?: number | null;
   status?: "streaming" | "running" | "done" | "error";
@@ -178,11 +187,13 @@ export function ConsoleApp({
   const [deleteMessageTarget, setDeleteMessageTarget] = useState<DeleteMessageTarget | null>(
     null,
   );
+  const [pendingAttachments, setPendingAttachments] = useState<ClientImageAttachment[]>([]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const pollingJobsRef = useRef<Set<string>>(new Set());
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const hasHydratedStorageRef = useRef(false);
   const hasHydratedConversationCacheRef = useRef(false);
 
@@ -351,14 +362,20 @@ export function ConsoleApp({
   }, [activeSummary, conversationId, conversations]);
 
   async function sendMessage(override?: string) {
-    const text = (override ?? input).trim();
+    const activeAttachments = override === undefined ? pendingAttachments : [];
+    const text =
+      (override ?? input).trim() || (activeAttachments.length > 0 ? "请分析这些图片。" : "");
     const targetConversationId = conversationId;
-    if (!text || runningConversations[targetConversationId]) {
+    if ((!text && activeAttachments.length === 0) || runningConversations[targetConversationId]) {
       return;
     }
 
     setConversationError(targetConversationId, null);
     setInput("");
+    setPendingAttachments([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
 
     const startedAt = currentTimestamp();
     const sentAt = new Date(startedAt).toISOString();
@@ -368,9 +385,11 @@ export function ConsoleApp({
       content: text,
       createdAt: sentAt,
       status: "done",
+      attachments: activeAttachments,
     };
     const assistantId = createId();
-    const inferredMode = inferConversationModeForUi(text);
+    // 用户带图片附件时优先进入读图问答链路，避免“生成/图片”等词把请求误路由到异步生图任务而丢失附件。
+    const inferredMode = activeAttachments.length > 0 ? "chat" : inferConversationModeForUi(text);
     const assistantMessage: Message = {
       id: assistantId,
       role: "assistant",
@@ -426,7 +445,21 @@ export function ConsoleApp({
             .filter((message) => message.role === "user" || message.role === "assistant")
             .filter((message) => !isSeedMessage(message))
             .filter((message) => message.id !== assistantId)
-            .map(({ id, role, content }) => ({ id, role, content })),
+            .map(({ id, role, content, attachments }) => ({
+              id,
+              role,
+              content,
+              attachments:
+                id === userMessage.id && attachments && attachments.length > 0
+                  ? attachments.map((attachment) => ({
+                      id: attachment.id,
+                      name: attachment.name,
+                      mimeType: attachment.mimeType,
+                      size: attachment.size,
+                      base64: attachment.base64,
+                    }))
+                  : undefined,
+            })),
           options: { showThinking: true, reasoningEffort },
         }),
         signal: controller.signal,
@@ -466,6 +499,65 @@ export function ConsoleApp({
         delete next[targetConversationId];
         return next;
       });
+    }
+  }
+
+  async function handleAttachmentFiles(files: FileList | null) {
+    if (!files || files.length === 0) {
+      return;
+    }
+
+    const incomingFiles = Array.from(files);
+    if (pendingAttachments.length + incomingFiles.length > MAX_IMAGE_ATTACHMENTS) {
+      setConversationError(conversationId, `单次最多上传 ${MAX_IMAGE_ATTACHMENTS} 张图片。`);
+      clearFileInput();
+      return;
+    }
+
+    try {
+      const nextAttachments: ClientImageAttachment[] = [];
+      for (const file of incomingFiles) {
+        if (!isSupportedImageMimeType(file.type)) {
+          throw new Error("图片附件仅支持 PNG、JPEG、WEBP 和非动画 GIF。");
+        }
+        if (file.size > MAX_IMAGE_ATTACHMENT_BYTES) {
+          throw new Error("单张图片不能超过 2MB。");
+        }
+
+        const dataUrl = await readFileAsDataUrl(file);
+        const base64 = base64FromDataUrl(dataUrl);
+        if (!base64) {
+          throw new Error("图片读取失败，请重新选择。");
+        }
+
+        nextAttachments.push({
+          id: createId(),
+          name: file.name || "image",
+          mimeType: file.type,
+          size: file.size,
+          base64,
+        });
+      }
+
+      setPendingAttachments((current) => [...current, ...nextAttachments]);
+      setConversationError(conversationId, null);
+    } catch (error) {
+      setConversationError(
+        conversationId,
+        error instanceof Error ? error.message : "图片附件读取失败。",
+      );
+    } finally {
+      clearFileInput();
+    }
+  }
+
+  function removePendingAttachment(id: string | undefined) {
+    setPendingAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }
+
+  function clearFileInput() {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   }
 
@@ -1255,6 +1347,33 @@ export function ConsoleApp({
                   </div>
                 )}
 
+                {message.role === "user" && message.attachments && message.attachments.length > 0 && (
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {message.attachments.map((attachment) => (
+                      <div
+                        key={attachment.id ?? attachment.name}
+                        className="overflow-hidden rounded-lg border border-white/15 bg-white/10"
+                      >
+                        {attachment.base64 ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={attachmentSource(attachment)}
+                            alt={attachment.name}
+                            className="aspect-square w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex aspect-square items-center justify-center px-2 text-center text-xs text-zinc-300">
+                            图片附件
+                          </div>
+                        )}
+                        <div className="truncate border-t border-white/10 px-2 py-1 text-[11px] text-zinc-300">
+                          {attachment.name}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {message.role === "user" && (
                   <div className="mt-2 flex items-center justify-end gap-1.5 text-[11px] text-zinc-400">
                     {messageTime && <span>{messageTime}</span>}
@@ -1403,6 +1522,46 @@ export function ConsoleApp({
             )}
 
             <div className="rounded-[28px] border border-zinc-200 bg-white p-3 shadow-sm">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={SUPPORTED_IMAGE_MIME_TYPES.join(",")}
+                multiple
+                className="sr-only"
+                disabled={isStreaming}
+                onChange={(event) => void handleAttachmentFiles(event.target.files)}
+              />
+
+              {pendingAttachments.length > 0 && (
+                <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {pendingAttachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="relative overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50"
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={attachmentSource(attachment)}
+                        alt={attachment.name}
+                        className="aspect-square w-full object-cover"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removePendingAttachment(attachment.id)}
+                        className="absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/65 text-white transition hover:bg-black"
+                        aria-label="移除图片"
+                        title="移除图片"
+                      >
+                        <X size={14} />
+                      </button>
+                      <div className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-2 py-1 text-[11px] text-white">
+                        {attachment.name}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
@@ -1423,6 +1582,16 @@ export function ConsoleApp({
                     <Globe2 size={13} />
                     联网自动
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isStreaming || pendingAttachments.length >= MAX_IMAGE_ATTACHMENTS}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    title={`上传图片，单张不超过 ${formatBytes(MAX_IMAGE_ATTACHMENT_BYTES)}`}
+                  >
+                    <ImagePlus size={14} />
+                    图片
+                  </button>
                   <button
                     type="button"
                     onClick={regenerate}
@@ -1481,7 +1650,7 @@ export function ConsoleApp({
                     <button
                       type="button"
                       onClick={() => void sendMessage()}
-                      disabled={!input.trim()}
+                      disabled={!input.trim() && pendingAttachments.length === 0}
                       className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-zinc-950 text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300"
                       aria-label="发送"
                     >
@@ -2037,6 +2206,16 @@ function compactMessageForCache(message: Message): Message {
   return {
     ...cacheableMessage,
     images: message.images?.map(compactImageForCache),
+    attachments: message.attachments?.map(compactAttachmentForCache),
+  };
+}
+
+function compactAttachmentForCache(attachment: ClientImageAttachment): ClientImageAttachment {
+  return {
+    id: attachment.id,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
   };
 }
 
@@ -2176,6 +2355,38 @@ function shouldSetInitialTitle(title: string | undefined, currentMessages: Messa
 
 function imageSource(image: GeneratedImage) {
   return image.url ?? `data:${image.mimeType};base64,${image.base64 ?? ""}`;
+}
+
+function attachmentSource(attachment: ClientImageAttachment) {
+  return `data:${attachment.mimeType};base64,${attachment.base64 ?? ""}`;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("图片读取失败，请重新选择。"));
+    };
+    reader.onerror = () => reject(new Error("图片读取失败，请重新选择。"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function base64FromDataUrl(dataUrl: string) {
+  const marker = ";base64,";
+  const markerIndex = dataUrl.indexOf(marker);
+  return markerIndex === -1 ? "" : dataUrl.slice(markerIndex + marker.length);
+}
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${Math.round(bytes / 1024 / 1024)}MB`;
+  }
+  return `${Math.round(bytes / 1024)}KB`;
 }
 
 function imageDownloadHref(image: GeneratedImage, fileName: string) {

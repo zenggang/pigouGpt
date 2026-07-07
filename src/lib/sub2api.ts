@@ -5,6 +5,12 @@ import {
   extractUsage,
   normalizeUpstreamError,
 } from "./response-parser";
+import {
+  MAX_IMAGE_ATTACHMENTS,
+  buildMessageContent,
+  normalizeClientImageAttachments,
+  summarizeImageAttachments,
+} from "./image-attachments";
 import type {
   ChatMode,
   ChatRequest,
@@ -56,11 +62,20 @@ export function validateChatRequest(payload: unknown): ChatRequest {
     .map((message) => ({
       ...message,
       content: message.content.trim(),
+      attachments: normalizeClientImageAttachments(message.attachments),
     }))
-    .filter((message) => message.content.length > 0);
+    .filter((message) => message.content.length > 0 || (message.attachments?.length ?? 0) > 0);
 
   if (messages.length === 0) {
     throw new Error("请输入问题后再发送。");
+  }
+
+  const imageAttachmentCount = messages.reduce(
+    (total, message) => total + (message.attachments?.length ?? 0),
+    0,
+  );
+  if (imageAttachmentCount > MAX_IMAGE_ATTACHMENTS) {
+    throw new Error(`单次最多上传 ${MAX_IMAGE_ATTACHMENTS} 张图片。`);
   }
 
   return {
@@ -99,6 +114,7 @@ export async function* streamChatResponse(
 ): AsyncGenerator<NormalizedEvent> {
   const config = getRuntimeConfig();
   const upstreamBody = buildUpstreamBody(request, true);
+  const imageSummary = summarizeRequestImages(request.messages);
 
   const startedAt = Date.now();
   const response = await fetch(`${config.baseUrl}/responses`, {
@@ -120,6 +136,9 @@ export async function* streamChatResponse(
       status: response.status,
       latencyMs: Date.now() - startedAt,
       requestId: response.headers.get("x-request-id"),
+      imageCount: imageSummary.count,
+      imageMimeTypes: imageSummary.mimeTypes,
+      imageApproxBytes: imageSummary.approxBytes,
       error: safeErrorForLog(body),
     });
     yield { type: "error", message: normalizeUpstreamError(response.status, body) };
@@ -181,6 +200,9 @@ export async function* streamChatResponse(
     status: response.status,
     latencyMs: Date.now() - startedAt,
     requestId: response.headers.get("x-request-id"),
+    imageCount: imageSummary.count,
+    imageMimeTypes: imageSummary.mimeTypes,
+    imageApproxBytes: imageSummary.approxBytes,
   });
 }
 
@@ -305,9 +327,17 @@ function buildConversationInput(messages: ClientMessage[]) {
   const latestUserIndex = messages.findLastIndex((message) => message.role === "user");
   return messages.map((message, index) => ({
     role: message.role,
-    content:
+    content: buildMessageContent(
       index === latestUserIndex ? stripToolCommand(message.content) : message.content,
+      message.role === "user" ? message.attachments : undefined,
+    ),
   }));
+}
+
+function summarizeRequestImages(messages: ClientMessage[]) {
+  return summarizeImageAttachments(
+    messages.flatMap((message) => (message.role === "user" ? message.attachments ?? [] : [])),
+  );
 }
 
 function stripToolCommand(text: string) {
@@ -317,8 +347,14 @@ function stripToolCommand(text: string) {
 function inferModeFromLatestUserMessage(messages: ClientMessage[]): ChatMode {
   const latestUserText =
     [...messages].reverse().find((message) => message.role === "user")?.content.trim() ?? "";
+  const latestUserAttachments =
+    [...messages].reverse().find((message) => message.role === "user")?.attachments ?? [];
 
   if (!latestUserText) {
+    return "chat";
+  }
+  if (latestUserAttachments.length > 0) {
+    // 带图请求必须走 vision 输入链路，不能被“生成图片/画图”等措辞误判到异步生图任务。
     return "chat";
   }
 

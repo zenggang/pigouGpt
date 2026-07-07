@@ -1,3 +1,5 @@
+import type { ClientImageAttachment } from "./image-attachments";
+
 export type PigouModel = "gpt-5.5" | "gpt-5.4";
 export type ReasoningEffort = "low" | "medium" | "high";
 
@@ -9,6 +11,7 @@ export type ClientMessage = {
   content: string;
   thinking?: string | null;
   images?: GeneratedImage[];
+  attachments?: ClientImageAttachment[];
 };
 
 export type ChatMode = "chat" | "image" | "search";
