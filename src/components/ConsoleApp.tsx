@@ -538,18 +538,11 @@ export function ConsoleApp({
           throw new Error("单张图片不能超过 2MB。");
         }
 
-        const dataUrl = await readFileAsDataUrl(file);
-        const base64 = base64FromDataUrl(dataUrl);
-        if (!base64) {
-          throw new Error("图片读取失败，请重新选择。");
-        }
+        const normalized = await normalizeImageFileForAttachment(file);
 
         nextAttachments.push({
           id: createId(),
-          name: file.name || "image",
-          mimeType: file.type,
-          size: file.size,
-          base64,
+          ...normalized,
         });
       }
 
@@ -1368,7 +1361,7 @@ export function ConsoleApp({
                         key={attachment.id ?? attachment.name}
                         className="overflow-hidden rounded-lg border border-white/15 bg-white/10"
                       >
-                        {attachment.base64 ? (
+                        {attachment.base64 || attachment.url ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
                             src={attachmentSource(attachment)}
@@ -2376,6 +2369,64 @@ function attachmentSource(attachment: ClientImageAttachment) {
   return attachment.url ?? `data:${attachment.mimeType};base64,${attachment.base64 ?? ""}`;
 }
 
+async function normalizeImageFileForAttachment(file: File): Promise<ClientImageAttachment> {
+  const dataUrl = await readFileAsDataUrl(file);
+  const pngDataUrl =
+    file.type === "image/png" ? dataUrl : await convertImageDataUrlToPng(dataUrl);
+  const base64 = base64FromDataUrl(pngDataUrl);
+  if (!base64) {
+    throw new Error("图片读取失败，请重新选择。");
+  }
+
+  const size = estimateBase64Bytes(base64);
+  if (size > MAX_IMAGE_ATTACHMENT_BYTES) {
+    throw new Error("图片转存后超过 2MB，请压缩后重试。");
+  }
+
+  return {
+    name: normalizedPngFileName(file.name || "image"),
+    // 线上图片存储接口当前只稳定接受 PNG；入口统一转 PNG，保证刷新后能拿 URL 回显。
+    mimeType: "image/png",
+    size,
+    base64,
+  };
+}
+
+function convertImageDataUrlToPng(dataUrl: string) {
+  return new Promise<string>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      const width = image.naturalWidth || image.width;
+      const height = image.naturalHeight || image.height;
+      if (!width || !height) {
+        reject(new Error("图片读取失败，请重新选择。"));
+        return;
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        reject(new Error("图片转存失败，请换一张图片重试。"));
+        return;
+      }
+
+      context.drawImage(image, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    image.onerror = () => reject(new Error("图片转存失败，请换一张图片重试。"));
+    image.src = dataUrl;
+  });
+}
+
+function normalizedPngFileName(name: string) {
+  const trimmed = name.trim() || "image";
+  return /\.(?:png|jpe?g|webp|gif)$/i.test(trimmed)
+    ? trimmed.replace(/\.(?:png|jpe?g|webp|gif)$/i, ".png")
+    : `${trimmed}.png`;
+}
+
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -2395,6 +2446,15 @@ function base64FromDataUrl(dataUrl: string) {
   const marker = ";base64,";
   const markerIndex = dataUrl.indexOf(marker);
   return markerIndex === -1 ? "" : dataUrl.slice(markerIndex + marker.length);
+}
+
+function estimateBase64Bytes(value: string) {
+  if (!value) {
+    return 0;
+  }
+
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.floor((value.length * 3) / 4) - padding;
 }
 
 function imageFilesFromClipboard(clipboardData: DataTransfer) {
