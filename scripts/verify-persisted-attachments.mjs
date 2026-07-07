@@ -12,4 +12,7 @@ assert.match(conversations, /JSON\.stringify\(params\.attachments \?\? \[\]\)/);
 assert.match(chatRoute, /persistUserImageAttachments/);
 assert.match(imageStorage, /persistUserImageAttachments/);
 assert.match(imageStorage, /ClientImageAttachment/);
+assert.match(imageStorage, /normalizeUserAttachmentForUpload/);
+assert.match(imageStorage, /await import\("sharp"\)/);
+assert.match(imageStorage, /mimeType:\s*"image\/png"/);
 assert.match(ecsApi, /image\/jpeg/);

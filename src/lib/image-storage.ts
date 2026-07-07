@@ -154,7 +154,8 @@ async function uploadUserAttachment(
   config: ImageApiConfig,
   attachment: ClientImageAttachment,
 ): Promise<ClientImageAttachment> {
-  if (attachment.size > MAX_UPLOAD_IMAGE_BYTES) {
+  const uploadableAttachment = await normalizeUserAttachmentForUpload(attachment);
+  if (uploadableAttachment.size > MAX_UPLOAD_IMAGE_BYTES) {
     throw new Error("User attachment is larger than upload limit.");
   }
 
@@ -165,9 +166,9 @@ async function uploadUserAttachment(
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
-      mimeType: attachment.mimeType,
-      base64: attachment.base64,
-      name: attachment.name,
+      mimeType: uploadableAttachment.mimeType,
+      base64: uploadableAttachment.base64,
+      name: uploadableAttachment.name,
     }),
   });
 
@@ -189,11 +190,38 @@ async function uploadUserAttachment(
 
   return {
     id: attachment.id,
-    name: attachment.name,
-    mimeType: attachment.mimeType,
-    size: attachment.size,
+    name: uploadableAttachment.name,
+    mimeType: uploadableAttachment.mimeType,
+    size: uploadableAttachment.size,
     url,
   };
+}
+
+async function normalizeUserAttachmentForUpload(
+  attachment: ClientImageAttachment,
+): Promise<ClientImageAttachment> {
+  if (attachment.mimeType === "image/png" || !attachment.base64) {
+    return attachment;
+  }
+
+  // 兼容旧客户端和未刷新的页面：ECS 图片接口当前只稳定接受 PNG，服务端再兜底转一次。
+  const { default: sharp } = await import("sharp");
+  const pngBuffer = await sharp(Buffer.from(attachment.base64, "base64")).png().toBuffer();
+
+  return {
+    ...attachment,
+    name: normalizedPngFileName(attachment.name),
+    mimeType: "image/png",
+    size: pngBuffer.length,
+    base64: pngBuffer.toString("base64"),
+  };
+}
+
+function normalizedPngFileName(name: string) {
+  const trimmed = name.trim() || "image";
+  return /\.(?:png|jpe?g|webp|gif)$/i.test(trimmed)
+    ? trimmed.replace(/\.(?:png|jpe?g|webp|gif)$/i, ".png")
+    : `${trimmed}.png`;
 }
 
 function stripBase64(images: GeneratedImage[]) {
