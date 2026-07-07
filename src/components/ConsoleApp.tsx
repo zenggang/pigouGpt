@@ -22,6 +22,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ClipboardEvent } from "react";
 import { DEFAULT_CONVERSATION_TITLE, summarizeConversationTitle } from "@/lib/conversation-title";
 import {
   MAX_IMAGE_ATTACHMENTS,
@@ -507,7 +508,20 @@ export function ConsoleApp({
       return;
     }
 
-    const incomingFiles = Array.from(files);
+    await handleAttachmentFileArray(Array.from(files));
+  }
+
+  async function handleAttachmentPaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const imageFiles = imageFilesFromClipboard(event.clipboardData);
+    if (imageFiles.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    await handleAttachmentFileArray(imageFiles);
+  }
+
+  async function handleAttachmentFileArray(incomingFiles: File[]) {
     if (pendingAttachments.length + incomingFiles.length > MAX_IMAGE_ATTACHMENTS) {
       setConversationError(conversationId, `单次最多上传 ${MAX_IMAGE_ATTACHMENTS} 张图片。`);
       clearFileInput();
@@ -1565,13 +1579,14 @@ export function ConsoleApp({
               <textarea
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
+                onPaste={(event) => void handleAttachmentPaste(event)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
                     void sendMessage();
                   }
                 }}
-                placeholder="输入问题，也可以直接描述要生成的图片；Enter 发送，Shift+Enter 换行"
+                placeholder="输入问题，可粘贴图片或直接描述要生成的图片；Enter 发送，Shift+Enter 换行"
                 className="max-h-44 min-h-16 w-full resize-none rounded-2xl px-3 py-2 text-sm leading-6 text-zinc-950 outline-none placeholder:text-zinc-400"
                 disabled={isStreaming}
               />
@@ -1590,7 +1605,7 @@ export function ConsoleApp({
                     title={`上传图片，单张不超过 ${formatBytes(MAX_IMAGE_ATTACHMENT_BYTES)}`}
                   >
                     <ImagePlus size={14} />
-                    图片
+                    附件
                   </button>
                   <button
                     type="button"
@@ -2380,6 +2395,18 @@ function base64FromDataUrl(dataUrl: string) {
   const marker = ";base64,";
   const markerIndex = dataUrl.indexOf(marker);
   return markerIndex === -1 ? "" : dataUrl.slice(markerIndex + marker.length);
+}
+
+function imageFilesFromClipboard(clipboardData: DataTransfer) {
+  const files = Array.from(clipboardData.files).filter((file) => file.type.startsWith("image/"));
+  if (files.length > 0) {
+    return files;
+  }
+
+  return Array.from(clipboardData.items)
+    .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file));
 }
 
 function formatBytes(bytes: number) {
