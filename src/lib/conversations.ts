@@ -64,6 +64,8 @@ type MessageRow = RowDataPacket & {
   image_job_completed_at: Date | string | null;
 };
 
+const STALE_RUNNING_MESSAGE_MS = 5 * 60 * 1000;
+
 export async function getLatestConversationSnapshot(userId: number): Promise<ConversationSnapshot> {
   const conversation =
     firstRow(
@@ -161,18 +163,19 @@ export async function listConversationMessages(
       row.image_job_created_at,
       row.image_job_completed_at,
     );
+    const createdAt = normalizeMysqlDateTime(row.created_at);
 
     return {
       id: row.id,
       role: row.role,
       content: row.content,
-      createdAt: normalizeMysqlDateTime(row.created_at),
+      createdAt,
       thinking: row.thinking,
       images: row.role === "assistant" ? parseJson<GeneratedImage[]>(row.images_json, []) : [],
       attachments: row.role === "user" ? parseJson<ClientImageAttachment[]>(row.images_json, []) : [],
       usage:
         imageJobDurationMs === null ? usage : withUsageDuration(usage, imageJobDurationMs),
-      status: row.status,
+      status: normalizeStoredMessageStatus(row, createdAt),
       error: row.error_message,
       imageJobId: row.image_job_id,
       imageJobStatus: row.image_job_status,
@@ -359,6 +362,28 @@ function toConversationSummary(row: ConversationRow): ConversationSummary {
     mode: row.mode,
     updatedAt: normalizeMysqlDateTime(row.updated_at),
   };
+}
+
+function normalizeStoredMessageStatus(
+  row: MessageRow,
+  createdAt: string,
+): "running" | "done" | "error" {
+  if (
+    row.role !== "assistant" ||
+    row.status !== "running" ||
+    row.image_job_id ||
+    !row.content.trim()
+  ) {
+    return row.status;
+  }
+
+  const createdTime = new Date(createdAt).getTime();
+  if (!Number.isFinite(createdTime) || Date.now() - createdTime < STALE_RUNNING_MESSAGE_MS) {
+    return row.status;
+  }
+
+  // 普通文本流断开时可能已写入正文但没写最终 done；历史加载按正文完成态展示，避免永久转圈。
+  return "done";
 }
 
 function normalizeMysqlDateTime(value: Date | string) {
