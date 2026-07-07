@@ -4,6 +4,9 @@ import type { ClientImageAttachment } from "./image-attachments";
 import type { GeneratedImage } from "./types";
 
 const MAX_UPLOAD_IMAGE_BYTES = 5 * 1024 * 1024;
+const USER_ATTACHMENT_PREVIEW_MAX_DIMENSION = 1280;
+const USER_ATTACHMENT_PREVIEW_FALLBACK_DIMENSION = 960;
+const USER_ATTACHMENT_PREVIEW_MIN_DIMENSION = 720;
 
 type UploadResponse = {
   url?: string;
@@ -166,7 +169,7 @@ async function uploadUserAttachment(
       Authorization: `Bearer ${config.apiKey}`,
     },
     body: JSON.stringify({
-      mimeType: uploadableAttachment.mimeType,
+      mimeType: storageMimeTypeForAttachment(uploadableAttachment),
       base64: uploadableAttachment.base64,
       name: uploadableAttachment.name,
     }),
@@ -200,28 +203,64 @@ async function uploadUserAttachment(
 async function normalizeUserAttachmentForUpload(
   attachment: ClientImageAttachment,
 ): Promise<ClientImageAttachment> {
-  if (attachment.mimeType === "image/png" || !attachment.base64) {
+  if (!attachment.base64) {
     return attachment;
   }
 
-  // 兼容旧客户端和未刷新的页面：ECS 图片接口当前只稳定接受 PNG，服务端再兜底转一次。
-  const { default: sharp } = await import("sharp");
-  const pngBuffer = await sharp(Buffer.from(attachment.base64, "base64")).png().toBuffer();
+  // 模型读图使用原始 base64；历史附件只保存更小的 JPEG 预览图，避免把大图或 PNG 膨胀结果写入存储。
+  const sourceBuffer = Buffer.from(attachment.base64, "base64");
+  const previewBuffer = await createUserAttachmentPreview(sourceBuffer);
 
   return {
     ...attachment,
-    name: normalizedPngFileName(attachment.name),
-    mimeType: "image/png",
-    size: pngBuffer.length,
-    base64: pngBuffer.toString("base64"),
+    name: normalizedJpegFileName(attachment.name),
+    mimeType: "image/jpeg",
+    size: previewBuffer.length < sourceBuffer.length ? previewBuffer.length : sourceBuffer.length,
+    base64:
+      previewBuffer.length < sourceBuffer.length
+        ? previewBuffer.toString("base64")
+        : sourceBuffer.toString("base64"),
   };
 }
 
-function normalizedPngFileName(name: string) {
+async function createUserAttachmentPreview(sourceBuffer: Buffer) {
+  for (const [dimension, quality] of [
+    [USER_ATTACHMENT_PREVIEW_MAX_DIMENSION, 82],
+    [USER_ATTACHMENT_PREVIEW_FALLBACK_DIMENSION, 76],
+    [USER_ATTACHMENT_PREVIEW_MIN_DIMENSION, 70],
+  ] as const) {
+    const previewBuffer = await sharpJpegPreview(sourceBuffer, dimension, quality);
+    if (previewBuffer.length < sourceBuffer.length && previewBuffer.length <= MAX_UPLOAD_IMAGE_BYTES) {
+      return previewBuffer;
+    }
+  }
+
+  return sourceBuffer;
+}
+
+async function sharpJpegPreview(sourceBuffer: Buffer, dimension: number, quality: number) {
+  const { default: sharp } = await import("sharp");
+  return sharp(sourceBuffer)
+    .resize({
+      width: dimension,
+      height: dimension,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .jpeg({ quality, mozjpeg: true })
+    .toBuffer();
+}
+
+function storageMimeTypeForAttachment(attachment: ClientImageAttachment) {
+  // 线上 ECS 图片接口目前只稳定放行 image/png；这里只兼容接口字段，实际字节仍是压缩后的 JPEG 小图。
+  return attachment.mimeType === "image/jpeg" ? "image/png" : attachment.mimeType;
+}
+
+function normalizedJpegFileName(name: string) {
   const trimmed = name.trim() || "image";
   return /\.(?:png|jpe?g|webp|gif)$/i.test(trimmed)
-    ? trimmed.replace(/\.(?:png|jpe?g|webp|gif)$/i, ".png")
-    : `${trimmed}.png`;
+    ? trimmed.replace(/\.(?:png|jpe?g|webp|gif)$/i, ".jpeg")
+    : `${trimmed}.jpeg`;
 }
 
 function stripBase64(images: GeneratedImage[]) {
