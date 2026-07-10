@@ -11,6 +11,7 @@
     "verify:attachment-ui": "node scripts/verify-attachment-ui-source.mjs",
     "verify:persisted-attachments": "node scripts/verify-persisted-attachments.mjs",
     "verify:stale-running-messages": "node scripts/verify-stale-running-messages.mjs",
+    "verify:gpt-5-6-default": "node scripts/verify-gpt-5-6-default.mjs",
     "db:setup": "node scripts/setup-db.mjs"
   },
   "dependencies": {
