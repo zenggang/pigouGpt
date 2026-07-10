@@ -11,12 +11,12 @@ import {
   normalizeClientImageAttachments,
   summarizeImageAttachments,
 } from "./image-attachments";
+import { PIGOU_MODELS } from "./types";
 import type {
   ChatMode,
   ChatRequest,
   ClientMessage,
   NormalizedEvent,
-  PigouModel,
   ReasoningEffort,
   UpstreamResponse,
 } from "./types";
@@ -28,8 +28,6 @@ const AUTO_SEARCH_INSTRUCTIONS =
   "你可以使用联网搜索工具。对于开放世界事实、资料查询、推荐对比、价格、政策、新闻、版本、地点、人物机构、产品服务、教程资料或可能随时间变化的问题，默认先搜索核验再回答，并在回答末尾用“来源：”列出 1-3 个真实 URL。只有纯写作润色、代码改写、数学计算、基于当前会话上下文的追问、闲聊或用户明确要求不要联网时，才不调用搜索。";
 const SEARCH_INSTRUCTIONS =
   "本轮已启用联网搜索。请优先依据搜索结果回答；涉及事实、价格、新闻、版本、政策或时间敏感信息时，回答末尾用“来源：”列出 1-3 个真实 URL。";
-
-const MODEL_ALLOWLIST: PigouModel[] = ["gpt-5.5", "gpt-5.4"];
 
 type RuntimeConfig = {
   baseUrl: string;
@@ -43,8 +41,8 @@ export function validateChatRequest(payload: unknown): ChatRequest {
 
   const input = payload as Partial<ChatRequest>;
 
-  if (!input.model || !MODEL_ALLOWLIST.includes(input.model)) {
-    throw new Error("当前仅支持 gpt-5.5 和 gpt-5.4。");
+  if (!input.model || !PIGOU_MODELS.includes(input.model)) {
+    throw new Error("当前支持 GPT-5.6、GPT-5.5 和 GPT-5.4。");
   }
 
   if (!Array.isArray(input.messages) || input.messages.length === 0) {

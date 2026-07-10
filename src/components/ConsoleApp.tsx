@@ -32,10 +32,11 @@ import {
   type ClientImageAttachment,
 } from "@/lib/image-attachments";
 import { extractVisibleThinkingFromContent } from "@/lib/thinking";
+import { DEFAULT_PIGOU_MODEL, PIGOU_MODELS, type PigouModel } from "@/lib/types";
 import { BrandMark } from "./BrandMark";
 import { MarkdownMessage } from "./MarkdownMessage";
 
-type Model = "gpt-5.5" | "gpt-5.4";
+type Model = PigouModel;
 type ReasoningEffort = "low" | "medium" | "high";
 type Role = "user" | "assistant";
 type ImageJobStatus = "queued" | "running" | "succeeded" | "failed";
@@ -140,9 +141,14 @@ type ConsoleAppProps = {
   initialConversations: ConversationSummary[];
 };
 
-const SETTINGS_KEY = "pigou-ai-console-settings-v1";
+const SETTINGS_KEY = "pigou-ai-console-settings-v2";
+const LEGACY_SETTINGS_KEY = "pigou-ai-console-settings-v1";
 const CONVERSATION_CACHE_KEY_PREFIX = "pigou-ai-console-conversation-cache-v1";
-const MODELS: Model[] = ["gpt-5.5", "gpt-5.4"];
+const MODEL_LABELS: Record<Model, string> = {
+  "gpt-5.6-sol": "GPT-5.6",
+  "gpt-5.5": "GPT-5.5",
+  "gpt-5.4": "GPT-5.4",
+};
 const REASONING_OPTIONS: Array<{ value: ReasoningEffort; label: string }> = [
   { value: "low", label: "低" },
   { value: "medium", label: "中" },
@@ -174,7 +180,7 @@ export function ConsoleApp({
     [initialConversationId]: initialMessages.length > 0 ? initialMessages : seedMessages,
   });
   const [input, setInput] = useState("");
-  const [model, setModel] = useState<Model>("gpt-5.5");
+  const [model, setModel] = useState<Model>(DEFAULT_PIGOU_MODEL);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
   const [runningConversations, setRunningConversations] = useState<
     Record<string, RunningConversation>
@@ -1622,9 +1628,9 @@ export function ConsoleApp({
                     className="h-9 rounded-full border border-zinc-200 bg-white px-3 text-sm font-medium text-zinc-700 outline-none transition hover:bg-zinc-50 focus:border-zinc-400"
                     disabled={isStreaming}
                   >
-                    {MODELS.map((item) => (
+                    {PIGOU_MODELS.map((item) => (
                       <option key={item} value={item}>
-                        {item}
+                        {MODEL_LABELS[item]}
                       </option>
                     ))}
                   </select>
@@ -2069,9 +2075,9 @@ function readStoredSettings(): {
   model: Model;
   reasoningEffort: ReasoningEffort;
 } {
-  const fallback = {
-    model: "gpt-5.5" as Model,
-    reasoningEffort: "medium" as ReasoningEffort,
+  const fallback: { model: Model; reasoningEffort: ReasoningEffort } = {
+    model: DEFAULT_PIGOU_MODEL,
+    reasoningEffort: "medium",
   };
 
   if (typeof window === "undefined") {
@@ -2080,7 +2086,29 @@ function readStoredSettings(): {
 
   const stored = window.localStorage.getItem(SETTINGS_KEY);
   if (!stored) {
-    return fallback;
+    const legacyStored = window.localStorage.getItem(LEGACY_SETTINGS_KEY);
+    if (!legacyStored) {
+      return fallback;
+    }
+
+    try {
+      const parsed = JSON.parse(legacyStored) as {
+        reasoningEffort?: ReasoningEffort;
+      };
+      const migrated = {
+        model: DEFAULT_PIGOU_MODEL,
+        reasoningEffort: isReasoningEffort(parsed.reasoningEffort)
+          ? parsed.reasoningEffort
+          : fallback.reasoningEffort,
+      };
+      // 旧设置中的模型只忽略一次，确保所有存量用户升级后默认切到 GPT-5.6，后续手动选择仍按 V2 设置持久化。
+      window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(migrated));
+      window.localStorage.removeItem(LEGACY_SETTINGS_KEY);
+      return migrated;
+    } catch {
+      window.localStorage.removeItem(LEGACY_SETTINGS_KEY);
+      return fallback;
+    }
   }
 
   try {
@@ -2090,7 +2118,8 @@ function readStoredSettings(): {
     };
 
     return {
-      model: parsed.model && MODELS.includes(parsed.model) ? parsed.model : fallback.model,
+      model:
+        parsed.model && PIGOU_MODELS.includes(parsed.model) ? parsed.model : fallback.model,
       reasoningEffort: isReasoningEffort(parsed.reasoningEffort)
         ? parsed.reasoningEffort
         : fallback.reasoningEffort,
@@ -2255,7 +2284,8 @@ function isConversationSummary(value: unknown): value is ConversationSummary {
   return (
     typeof record.id === "string" &&
     typeof record.title === "string" &&
-    (record.model === "gpt-5.5" || record.model === "gpt-5.4") &&
+    typeof record.model === "string" &&
+    PIGOU_MODELS.includes(record.model as Model) &&
     (record.mode === "chat" || record.mode === "image" || record.mode === "search") &&
     typeof record.updatedAt === "string"
   );

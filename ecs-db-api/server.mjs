@@ -295,7 +295,7 @@ function normalizeImageJobPayload(body) {
     !isValidId(conversationId) ||
     !isValidId(assistantMessageId) ||
     !prompt ||
-    !["gpt-5.5", "gpt-5.4"].includes(model) ||
+    !["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"].includes(model) ||
     !["low", "medium", "high"].includes(reasoningEffort)
   ) {
     return null;

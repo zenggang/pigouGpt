@@ -29,7 +29,7 @@ create table if not exists conversations (
   id varchar(64) not null,
   user_id bigint unsigned not null,
   title varchar(191) not null default '新的会话',
-  model varchar(32) not null default 'gpt-5.5',
+  model varchar(32) not null default 'gpt-5.6-sol',
   mode varchar(32) not null default 'chat',
   created_at datetime(3) not null default current_timestamp(3),
   updated_at datetime(3) not null default current_timestamp(3) on update current_timestamp(3),

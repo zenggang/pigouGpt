@@ -2,6 +2,7 @@ import "server-only";
 
 import type { RowDataPacket } from "mysql2/promise";
 import type { ClientImageAttachment } from "./image-attachments";
+import { DEFAULT_PIGOU_MODEL } from "./types";
 import type {
   ChatMode,
   GeneratedImage,
@@ -125,14 +126,14 @@ export async function listConversations(userId: number): Promise<ConversationSum
 export async function createConversation(userId: number) {
   const id = crypto.randomUUID();
   await execute(
-    `insert into conversations (id, user_id, title)
-     values (?, ?, ?)`,
-    [id, userId, "新的会话"],
+    `insert into conversations (id, user_id, title, model)
+     values (?, ?, ?, ?)`,
+    [id, userId, "新的会话", DEFAULT_PIGOU_MODEL],
   );
   return {
     id,
     title: "新的会话",
-    model: "gpt-5.5" as PigouModel,
+    model: DEFAULT_PIGOU_MODEL,
     mode: "chat" as ChatMode,
     updatedAt: new Date().toISOString(),
   };
