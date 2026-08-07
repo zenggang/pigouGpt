@@ -1,10 +1,10 @@
 import {
   extractImages,
-  extractReasoningSummary,
   extractText,
   extractUsage,
   normalizeUpstreamError,
 } from "./response-parser";
+import { UpstreamTimeoutError, withTimeout } from "./upstream-runtime.mjs";
 import {
   MAX_IMAGE_ATTACHMENTS,
   buildMessageContent,
@@ -28,6 +28,8 @@ const AUTO_SEARCH_INSTRUCTIONS =
   "你可以使用联网搜索工具。对于开放世界事实、资料查询、推荐对比、价格、政策、新闻、版本、地点、人物机构、产品服务、教程资料或可能随时间变化的问题，默认先搜索核验再回答，并在回答末尾用“来源：”列出 1-3 个真实 URL。只有纯写作润色、代码改写、数学计算、基于当前会话上下文的追问、闲聊或用户明确要求不要联网时，才不调用搜索。";
 const SEARCH_INSTRUCTIONS =
   "本轮已启用联网搜索。请优先依据搜索结果回答；涉及事实、价格、新闻、版本、政策或时间敏感信息时，回答末尾用“来源：”列出 1-3 个真实 URL。";
+const CONNECT_TIMEOUT_MS = 30 * 1000;
+const STREAM_IDLE_TIMEOUT_MS = 90 * 1000;
 
 type RuntimeConfig = {
   baseUrl: string;
@@ -115,15 +117,53 @@ export async function* streamChatResponse(
   const imageSummary = summarizeRequestImages(request.messages);
 
   const startedAt = Date.now();
-  const response = await fetch(`${config.baseUrl}/responses`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
-    },
-    body: JSON.stringify(upstreamBody),
-    signal,
-  });
+  const upstreamController = new AbortController();
+  const abortUpstream = () => upstreamController.abort(signal.reason);
+  if (signal.aborted) {
+    abortUpstream();
+  } else {
+    signal.addEventListener("abort", abortUpstream, { once: true });
+  }
+
+  let response: Response;
+  try {
+    response = await withTimeout(
+      fetch(`${config.baseUrl}/responses`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(upstreamBody),
+        signal: upstreamController.signal,
+      }),
+      CONNECT_TIMEOUT_MS,
+      "AI gateway connection timed out",
+      () => upstreamController.abort(),
+    );
+  } catch (error) {
+    signal.removeEventListener("abort", abortUpstream);
+    if (signal.aborted) {
+      throw error;
+    }
+
+    const timedOut = error instanceof UpstreamTimeoutError;
+    console.error("sub2api upstream connection failed", {
+      model: request.model,
+      mode: request.mode,
+      stage: "connect",
+      latencyMs: Date.now() - startedAt,
+      timedOut,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    yield {
+      type: "error",
+      message: timedOut
+        ? "AI 网关响应超时，请稍后重新生成。"
+        : "AI 网关连接失败，请稍后重新生成。",
+    };
+    return;
+  }
 
   if (!response.ok || !response.body) {
     const body = await safeJson(response);
@@ -140,6 +180,7 @@ export async function* streamChatResponse(
       error: safeErrorForLog(body),
     });
     yield { type: "error", message: normalizeUpstreamError(response.status, body) };
+    signal.removeEventListener("abort", abortUpstream);
     return;
   }
 
@@ -149,7 +190,41 @@ export async function* streamChatResponse(
   let emittedText = false;
 
   while (true) {
-    const { value, done } = await reader.read();
+    let readResult: ReadableStreamReadResult<Uint8Array>;
+    try {
+      readResult = await withTimeout(
+        reader.read(),
+        STREAM_IDLE_TIMEOUT_MS,
+        "AI gateway stream became idle",
+        () => upstreamController.abort(),
+      );
+    } catch (error) {
+      signal.removeEventListener("abort", abortUpstream);
+      if (signal.aborted) {
+        throw error;
+      }
+
+      const timedOut = error instanceof UpstreamTimeoutError;
+      console.error("sub2api upstream stream failed", {
+        model: request.model,
+        mode: request.mode,
+        stage: "stream",
+        latencyMs: Date.now() - startedAt,
+        requestId: response.headers.get("x-request-id"),
+        timedOut,
+        emittedText,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      yield {
+        type: "error",
+        message: timedOut
+          ? "AI 网关响应超时，请稍后重新生成。"
+          : "AI 网关连接中断，请稍后重新生成。",
+      };
+      return;
+    }
+
+    const { value, done } = readResult;
     if (done) {
       break;
     }
@@ -202,6 +277,7 @@ export async function* streamChatResponse(
     imageMimeTypes: imageSummary.mimeTypes,
     imageApproxBytes: imageSummary.approxBytes,
   });
+  signal.removeEventListener("abort", abortUpstream);
 }
 
 export async function* completeImageResponse(
@@ -495,18 +571,12 @@ async function* normalizeSseEvent(
     event === "response.reasoning_summary_text.delta" &&
     typeof data.delta === "string"
   ) {
-    yield { type: "thinking_delta", delta: data.delta };
+    // Raw reasoning summaries are not user-facing because compatible gateways may expose internal planning text.
     return;
   }
 
   if (event === "response.reasoning_summary_part.added") {
-    const part = data.part;
-    if (typeof part === "object" && part !== null) {
-      const text = (part as Record<string, unknown>).text;
-      if (typeof text === "string" && text.trim()) {
-        yield { type: "thinking_delta", delta: `${text.trim()}\n` };
-      }
-    }
+    // Some gateways send the same private planning summary as a whole part instead of deltas.
     return;
   }
 
@@ -520,10 +590,6 @@ async function* normalizeSseEvent(
 
   if (event === "response.completed") {
     const upstream = data.response ? (data.response as UpstreamResponse) : (data as UpstreamResponse);
-    const reasoningSummary = extractReasoningSummary(upstream);
-    if (reasoningSummary) {
-      yield { type: "thinking_delta", delta: reasoningSummary };
-    }
     const text = extractText(upstream);
     if (options.emitCompletedText && text) {
       yield { type: "text_delta", delta: text };

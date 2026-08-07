@@ -1,4 +1,5 @@
 import type { GeneratedImage, UpstreamResponse, UsageSummary } from "./types";
+import { sanitizeUpstreamErrorMessage } from "./upstream-runtime.mjs";
 
 export function extractText(response: UpstreamResponse): string {
   if (typeof response.output_text === "string") {
@@ -136,11 +137,11 @@ function extractErrorMessage(body: unknown): string {
 
   if (typeof error === "object" && error !== null) {
     const message = (error as Record<string, unknown>).message;
-    return typeof message === "string" ? message : "";
+    return sanitizeUpstreamErrorMessage(message);
   }
 
   if (typeof record.message === "string") {
-    return record.message;
+    return sanitizeUpstreamErrorMessage(record.message);
   }
 
   return "";

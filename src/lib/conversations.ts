@@ -2,6 +2,7 @@ import "server-only";
 
 import type { RowDataPacket } from "mysql2/promise";
 import type { ClientImageAttachment } from "./image-attachments";
+import { recoverStaleTextMessage } from "./stale-message.mjs";
 import { DEFAULT_PIGOU_MODEL } from "./types";
 import type {
   ChatMode,
@@ -64,8 +65,6 @@ type MessageRow = RowDataPacket & {
   image_job_created_at: Date | string | null;
   image_job_completed_at: Date | string | null;
 };
-
-const STALE_RUNNING_MESSAGE_MS = 5 * 60 * 1000;
 
 export async function getLatestConversationSnapshot(userId: number): Promise<ConversationSnapshot> {
   const conversation =
@@ -166,7 +165,7 @@ export async function listConversationMessages(
     );
     const createdAt = normalizeMysqlDateTime(row.created_at);
 
-    return {
+    const message: StoredMessage = {
       id: row.id,
       role: row.role,
       content: row.content,
@@ -176,11 +175,13 @@ export async function listConversationMessages(
       attachments: row.role === "user" ? parseJson<ClientImageAttachment[]>(row.images_json, []) : [],
       usage:
         imageJobDurationMs === null ? usage : withUsageDuration(usage, imageJobDurationMs),
-      status: normalizeStoredMessageStatus(row, createdAt),
+      status: row.status,
       error: row.error_message,
       imageJobId: row.image_job_id,
       imageJobStatus: row.image_job_status,
     };
+
+    return recoverStaleTextMessage(message) as StoredMessage;
   });
 }
 
@@ -363,28 +364,6 @@ function toConversationSummary(row: ConversationRow): ConversationSummary {
     mode: row.mode,
     updatedAt: normalizeMysqlDateTime(row.updated_at),
   };
-}
-
-function normalizeStoredMessageStatus(
-  row: MessageRow,
-  createdAt: string,
-): "running" | "done" | "error" {
-  if (
-    row.role !== "assistant" ||
-    row.status !== "running" ||
-    row.image_job_id ||
-    !row.content.trim()
-  ) {
-    return row.status;
-  }
-
-  const createdTime = new Date(createdAt).getTime();
-  if (!Number.isFinite(createdTime) || Date.now() - createdTime < STALE_RUNNING_MESSAGE_MS) {
-    return row.status;
-  }
-
-  // 普通文本流断开时可能已写入正文但没写最终 done；历史加载按正文完成态展示，避免永久转圈。
-  return "done";
 }
 
 function normalizeMysqlDateTime(value: Date | string) {

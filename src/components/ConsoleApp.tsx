@@ -477,7 +477,11 @@ export function ConsoleApp({
         throw new Error(body?.message || "服务端请求失败。");
       }
 
-      await consumeSse(response.body, targetConversationId, assistantId);
+      const terminalEvent = await consumeSse(response.body, targetConversationId, assistantId);
+      if (!terminalEvent) {
+        // 浏览器只在收到服务端明确的 done/error 后结束；网络截断不能把空响应误报为成功。
+        throw new Error("连接意外中断，请重新生成。");
+      }
       finalizeAssistant(targetConversationId, assistantId);
     } catch (requestError) {
       const message =
@@ -582,6 +586,7 @@ export function ConsoleApp({
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    let terminalEvent: "done" | "error" | null = null;
 
     while (true) {
       const { value, done } = await reader.read();
@@ -595,21 +600,25 @@ export function ConsoleApp({
       while (boundary !== -1) {
         const block = buffer.slice(0, boundary);
         buffer = buffer.slice(boundary + 2);
-        handleSseBlock(block, targetConversationId, assistantId);
+        terminalEvent =
+          handleSseBlock(block, targetConversationId, assistantId) ?? terminalEvent;
         boundary = buffer.indexOf("\n\n");
       }
     }
 
     if (buffer.trim()) {
-      handleSseBlock(buffer, targetConversationId, assistantId);
+      terminalEvent =
+        handleSseBlock(buffer, targetConversationId, assistantId) ?? terminalEvent;
     }
+
+    return terminalEvent;
   }
 
   function handleSseBlock(
     block: string,
     targetConversationId: string,
     assistantId: string,
-  ) {
+  ): "done" | "error" | null {
     const dataLine = block
       .split("\n")
       .find((line) => line.startsWith("data:"))
@@ -617,14 +626,14 @@ export function ConsoleApp({
       .trim();
 
     if (!dataLine) {
-      return;
+      return null;
     }
 
     let event: NormalizedEvent;
     try {
       event = JSON.parse(dataLine) as NormalizedEvent;
     } catch {
-      return;
+      return null;
     }
 
     if (event.type === "text_delta") {
@@ -685,6 +694,8 @@ export function ConsoleApp({
         ),
       }));
     }
+
+    return event.type === "done" || event.type === "error" ? event.type : null;
   }
 
   function finalizeAssistant(targetConversationId: string, assistantId: string) {

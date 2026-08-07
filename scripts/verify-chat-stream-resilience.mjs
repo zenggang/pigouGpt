@@ -7,7 +7,9 @@ const staleMessageUrl = new URL("../src/lib/stale-message.mjs", import.meta.url)
 assert.ok(existsSync(upstreamRuntimeUrl), "upstream runtime helper should exist");
 assert.ok(existsSync(staleMessageUrl), "stale message helper should exist");
 
-const { UpstreamTimeoutError, withTimeout } = await import(upstreamRuntimeUrl);
+const { UpstreamTimeoutError, sanitizeUpstreamErrorMessage, withTimeout } = await import(
+  upstreamRuntimeUrl
+);
 const { STALE_RUNNING_MESSAGE_MS, recoverStaleTextMessage } = await import(staleMessageUrl);
 
 let timeoutCallbackCount = 0;
@@ -28,6 +30,8 @@ assert.equal(
   await withTimeout(Promise.resolve("ok"), 50, "should not time out"),
   "ok",
 );
+assert.equal(sanitizeUpstreamErrorMessage("<html><h1>502 Bad Gateway</h1></html>"), "");
+assert.equal(sanitizeUpstreamErrorMessage("temporary backend failure"), "temporary backend failure");
 
 const staleMessage = recoverStaleTextMessage(
   {
