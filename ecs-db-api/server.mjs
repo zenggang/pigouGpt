@@ -2,7 +2,15 @@ import express from "express";
 import mysql from "mysql2/promise";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
+import { createClient } from "redis";
+import {
+  consumeMessageSnapshots,
+  enqueueMessageSnapshot,
+  ensureMessageSnapshotGroup,
+  normalizeMessageSnapshot,
+} from "./message-snapshot-queue.mjs";
 
 const port = Number(process.env.PORT ?? "2571");
 const host = process.env.HOST ?? "127.0.0.1";
@@ -13,6 +21,11 @@ const publicBaseUrl = (process.env.PIGOU_PUBLIC_BASE_URL ?? "").replace(/\/+$/, 
 const sub2apiBaseUrl = process.env.SUB2API_BASE_URL?.replace(/\/+$/, "");
 const sub2apiKey = process.env.SUB2API_KEY;
 const mysqlDatabase = process.env.MYSQL_DATABASE;
+const redisUrl = process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
+const messageSnapshotStream =
+  process.env.PIGOU_MESSAGE_SNAPSHOT_STREAM ?? "pigou:message-snapshots";
+const messageSnapshotGroup =
+  process.env.PIGOU_MESSAGE_SNAPSHOT_GROUP ?? "pigou-db-api";
 const runningImageJobs = new Set();
 const imageMimeTypes = new Map([
   ["image/png", { extension: "png", expressType: "png" }],
@@ -39,16 +52,26 @@ const pool = mysql.createPool({
   queueLimit: 0,
   timezone: "Z",
 });
+const snapshotProducer = createClient({ url: redisUrl });
+const snapshotConsumer = snapshotProducer.duplicate();
+const snapshotConsumerAbort = new AbortController();
+const snapshotConsumerName = `${hostname()}:${process.pid}`;
+
+for (const client of [snapshotProducer, snapshotConsumer]) {
+  client.on("error", (error) => {
+    console.error("redis client error", safeError(error));
+  });
+}
 
 const app = express();
 
 app.get("/health", async (_req, res) => {
   try {
-    await pool.query("select 1");
-    res.json({ ok: true, mysql: true });
+    await Promise.all([pool.query("select 1"), snapshotProducer.ping()]);
+    res.json({ ok: true, mysql: true, redis: true });
   } catch (error) {
-    console.error("health mysql failed", safeError(error));
-    res.status(503).json({ ok: false, mysql: false });
+    console.error("health dependency failed", safeError(error));
+    res.status(503).json({ ok: false, mysql: false, redis: false });
   }
 });
 
@@ -187,6 +210,33 @@ app.get("/image-jobs/:jobId", async (req, res) => {
 
 app.use(express.json({ limit: "128kb" }));
 
+app.post("/message-snapshots", async (req, res) => {
+  if (!isAuthorized(req)) {
+    res.status(401).json({ message: "Unauthorized" });
+    return;
+  }
+
+  const snapshot = normalizeMessageSnapshot(req.body);
+  if (!snapshot) {
+    res.status(400).json({ message: "Invalid message snapshot" });
+    return;
+  }
+
+  try {
+    // Redis 接收成功即返回，MySQL 由 consumer group 慢慢消费，避免持久化反压聊天 SSE。
+    const queueId = await enqueueMessageSnapshot(snapshotProducer, snapshot, messageSnapshotStream);
+    res.status(202).json({ queued: true, queueId });
+  } catch (error) {
+    console.error("message snapshot enqueue failed", {
+      assistantId: snapshot.id,
+      conversationId: snapshot.conversationId,
+      status: snapshot.status,
+      error: safeError(error),
+    });
+    res.status(503).json({ message: "Message snapshot queue unavailable" });
+  }
+});
+
 app.post("/query", async (req, res) => {
   if (!isAuthorized(req)) {
     res.status(401).json({ message: "Unauthorized" });
@@ -231,8 +281,26 @@ app.post("/query", async (req, res) => {
 });
 
 await ensureSchema();
+await snapshotProducer.connect();
+await snapshotConsumer.connect();
+await ensureMessageSnapshotGroup(
+  snapshotProducer,
+  messageSnapshotStream,
+  messageSnapshotGroup,
+);
+
 app.listen(port, host, () => {
   console.log(`pigou db api listening on http://${host}:${port}`);
+  consumeMessageSnapshots({
+    redis: snapshotConsumer,
+    pool,
+    stream: messageSnapshotStream,
+    group: messageSnapshotGroup,
+    consumer: snapshotConsumerName,
+    signal: snapshotConsumerAbort.signal,
+  }).catch((error) => {
+    console.error("message snapshot consumer stopped", safeError(error));
+  });
   resumePendingImageJobs().catch((error) => {
     console.error("image job resume failed", safeError(error));
   });

@@ -17,7 +17,7 @@
 ## 数据流
 
 1. Vercel 收到上游 SSE 后立即 `enqueue()` 给浏览器。
-2. 路由只在内存中合并当前 assistant 快照；`text_delta` 到达时立即清除占位 thinking。
+2. 路由只在内存中合并当前 assistant 快照；`text_delta` 到达时立即清除占位 thinking。初始 running 快照与上游请求并行入队，不阻塞模型首包。
 3. 服务端写出明确 `done` 或 `error` 后关闭 SSE。
 4. Next.js `after()` 在响应结束后把最终快照提交到 ECS `/message-snapshots`。
 5. ECS 接口校验业务字段后执行 Redis `XADD` 并立即返回 `202`。
@@ -25,7 +25,7 @@
 
 ## 边界与降级
 
-- 初始 running 快照仍同步保存一次，确保长推理期间刷新有可恢复占位；它发生在上游请求前，不阻塞已经返回的正文。
+- 初始 running 快照立即异步入队，并在最终终态入队前等待其入队完成，既支持刷新恢复，也保证同一 assistant 的状态顺序。
 - 最终 Redis 投递失败会记录 assistantId、conversationId、status 和错误，不向用户伪报业务失败；原始 running 记录会由现有 stale recovery 转为可重新生成。
 - Redis 只绑定 `127.0.0.1`，不开放公网；AOF 使用 `everysec`。
 - consumer 必须幂等：同一 assistantId 使用 MySQL upsert，晚到的终态覆盖 running 快照。

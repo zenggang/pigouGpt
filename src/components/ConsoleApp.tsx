@@ -32,6 +32,7 @@ import {
   type ClientImageAttachment,
 } from "@/lib/image-attachments";
 import { extractVisibleThinkingFromContent } from "@/lib/thinking";
+import { mergeStreamingTextDelta } from "@/lib/streaming-message.mjs";
 import { DEFAULT_PIGOU_MODEL, PIGOU_MODELS, type PigouModel } from "@/lib/types";
 import { BrandMark } from "./BrandMark";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -639,7 +640,8 @@ export function ConsoleApp({
     if (event.type === "text_delta") {
       updateAssistant(targetConversationId, assistantId, (assistant) => ({
         ...assistant,
-        ...mergeStreamingTextDelta(assistant, event.delta),
+        // 首段可见正文已到达时清掉合成占位，避免回答和“思考中...”同时展示。
+        ...mergeStreamingTextDelta(assistant, event.delta, extractStreamingThinkingFromContent),
       }));
     }
 
@@ -2320,23 +2322,6 @@ function appendThinking(current: string | null | undefined, delta: string) {
     return delta;
   }
   return `${current}${delta}`;
-}
-
-function mergeStreamingTextDelta(message: Message, delta: string): Partial<Message> {
-  const rawContent = `${message.rawContent ?? message.content}${delta}`;
-  const extracted = extractStreamingThinkingFromContent(rawContent);
-  if (!extracted) {
-    return {
-      rawContent,
-      content: rawContent,
-    };
-  }
-
-  return {
-    rawContent,
-    content: extracted.content,
-    thinking: extracted.thinking || message.thinking,
-  };
 }
 
 function extractStreamingThinkingFromContent(content: string): {

@@ -96,6 +96,31 @@ export function firstRow<T extends RowDataPacket>(rows: T[]): T | null {
 
 export type QueryResult = [RowDataPacket[] | ResultSetHeader, FieldPacket[]];
 
+export async function enqueueMessageSnapshot(snapshot: unknown): Promise<string | undefined> {
+  const config = getDbApiConfig();
+  if (!config) {
+    throw new Error("消息快照队列只在 DATABASE_API_BASE_URL 模式下可用。");
+  }
+
+  const response = await fetch(`${config.baseUrl}/message-snapshots`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify(snapshot),
+  });
+  const body = (await response.json().catch(() => null)) as
+    | { message?: string; queueId?: string }
+    | null;
+
+  if (!response.ok) {
+    throw new Error(body?.message || "消息快照入队失败。");
+  }
+
+  return body?.queueId;
+}
+
 async function requestDatabaseApi(
   config: { baseUrl: string; apiKey: string },
   mode: "query" | "execute",

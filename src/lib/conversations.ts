@@ -12,7 +12,7 @@ import type {
   UsageSummary,
 } from "./types";
 import { DEFAULT_CONVERSATION_TITLE, summarizeConversationTitle } from "./conversation-title";
-import { execute, firstRow, queryRows } from "./db";
+import { enqueueMessageSnapshot, execute, firstRow, queryRows } from "./db";
 
 export type StoredMessage = {
   id: string;
@@ -266,7 +266,7 @@ export async function saveUserMessage(params: {
   });
 }
 
-export async function saveAssistantMessage(params: {
+export type AssistantMessageSnapshot = {
   id: string;
   userId: number;
   conversationId: string;
@@ -277,7 +277,9 @@ export async function saveAssistantMessage(params: {
   status: "running" | "done" | "error";
   error?: string | null;
   responseId?: string;
-}) {
+};
+
+export async function saveAssistantMessage(params: AssistantMessageSnapshot) {
   await execute(
     `insert into messages (
        id, conversation_id, user_id, role, content, thinking, images_json,
@@ -307,6 +309,16 @@ export async function saveAssistantMessage(params: {
   );
 
   await touchConversation(params.conversationId);
+}
+
+export async function enqueueAssistantMessageSnapshot(params: AssistantMessageSnapshot) {
+  return enqueueMessageSnapshot({
+    ...params,
+    thinking: params.thinking ?? null,
+    usage: params.usage ?? null,
+    error: params.error ?? null,
+    responseId: params.responseId ?? null,
+  });
 }
 
 async function touchConversation(

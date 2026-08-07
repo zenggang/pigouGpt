@@ -2,13 +2,16 @@ import {
   streamChatResponse,
   validateChatRequest,
 } from "@/lib/sub2api";
+import { after } from "next/server";
 import type { ClientMessage, NormalizedEvent } from "@/lib/types";
 import { AuthRequiredError, requireCurrentUser, type AuthUser } from "@/lib/auth";
 import {
   assertConversationOwner,
   createConversation,
+  enqueueAssistantMessageSnapshot,
   saveAssistantMessage,
   saveUserMessage,
+  type AssistantMessageSnapshot,
 } from "@/lib/conversations";
 import { createImageJob } from "@/lib/image-jobs";
 import { persistUserImageAttachments } from "@/lib/image-storage";
@@ -122,7 +125,17 @@ export async function POST(request: Request) {
 
   const encoder = new TextEncoder();
   const abortController = new AbortController();
+  let finalAssistantSnapshot: AssistantMessageSnapshot | null = null;
+  let initialSnapshotPersistence: Promise<void> | null = null;
   request.signal.addEventListener("abort", () => abortController.abort(), { once: true });
+
+  const persistSnapshot = async (snapshot: AssistantMessageSnapshot) => {
+    if (process.env.DATABASE_API_BASE_URL) {
+      return enqueueAssistantMessageSnapshot(snapshot);
+    }
+    await saveAssistantMessage(snapshot);
+    return undefined;
+  };
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -142,11 +155,12 @@ export async function POST(request: Request) {
       let usage: Parameters<typeof saveAssistantMessage>[0]["usage"];
       const assistantId = crypto.randomUUID();
       const assistantStartedAt = Date.now();
-      let lastSnapshotSavedAt = 0;
+      let firstTextAt: number | null = null;
 
       const capture = (event: NormalizedEvent) => {
         if (event.type === "text_delta") {
           assistantContent += event.delta;
+          firstTextAt ??= Date.now();
         }
         if (event.type === "thinking_delta") {
           assistantThinking =
@@ -164,16 +178,9 @@ export async function POST(request: Request) {
         }
       };
 
-      const saveAssistantSnapshot = async (
+      const buildAssistantSnapshot = (
         status: "running" | "done" | "error",
-        force = false,
-      ) => {
-        const now = Date.now();
-        if (!force && now - lastSnapshotSavedAt < 2500) {
-          return;
-        }
-        lastSnapshotSavedAt = now;
-
+      ): AssistantMessageSnapshot => {
         const extracted = extractVisibleThinkingFromContent(assistantContent);
         const snapshotContent =
           extracted.content ||
@@ -190,7 +197,7 @@ export async function POST(request: Request) {
             ? usage
             : withUsageDuration(usage, Date.now() - assistantStartedAt);
 
-        await saveAssistantMessage({
+        return {
           id: assistantId,
           userId: user.id,
           conversationId,
@@ -201,14 +208,23 @@ export async function POST(request: Request) {
           status,
           error: assistantError,
           responseId,
-        });
+        };
       };
 
       try {
         const iterator = streamChatResponse(chatRequest, abortController.signal);
 
-        // 普通 chat/search 仍是 SSE 直连；先落 running 快照，刷新页面时至少能恢复当前 assistant 占位。
-        await saveAssistantSnapshot("running", true);
+        // running 快照与上游请求并行入队，既保留刷新恢复能力，也不让数据库延迟推迟模型首包。
+        const initialSnapshot = buildAssistantSnapshot("running");
+        initialSnapshotPersistence = persistSnapshot(initialSnapshot)
+          .then(() => undefined)
+          .catch((error) => {
+            console.error("initial assistant snapshot persistence failed", {
+              assistantId: initialSnapshot.id,
+              conversationId: initialSnapshot.conversationId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
         write({ type: "thinking_delta", delta: "思考中..." });
 
         for await (const event of iterator) {
@@ -217,24 +233,21 @@ export async function POST(request: Request) {
           }
           capture(event);
           write(event);
-          await saveAssistantSnapshot("running");
         }
 
-        try {
-          assistantStatus = assistantError ? "error" : "done";
-          await saveAssistantSnapshot(assistantStatus, true);
-        } catch (error) {
-          console.error("assistant message save failed", {
-            userId: user.id,
-            conversationId,
-            responseId,
-            status: assistantStatus,
-            contentLength: assistantContent.length,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-
+        assistantStatus = assistantError ? "error" : "done";
+        finalAssistantSnapshot = buildAssistantSnapshot(assistantStatus);
+        // 终止事件必须先到浏览器；最终持久化由 after() 投递 Redis，不再阻塞 UI 收尾。
         write({ type: "done" });
+        console.info("chat stream delivered", {
+          model: chatRequest.model,
+          mode: chatRequest.mode,
+          status: assistantStatus,
+          firstTextLatencyMs: firstTextAt ? firstTextAt - assistantStartedAt : null,
+          totalLatencyMs: Date.now() - assistantStartedAt,
+          contentLength: assistantContent.length,
+          responseId,
+        });
       } catch (error) {
         assistantStatus = "error";
         if (abortController.signal.aborted) {
@@ -243,22 +256,41 @@ export async function POST(request: Request) {
           assistantError = error instanceof Error ? error.message : "服务端请求失败。";
         }
 
-        try {
-          await saveAssistantSnapshot("error", true);
-        } catch (saveError) {
-          console.error("assistant interrupted message save failed", {
-            userId: user.id,
-            conversationId,
-            responseId,
-            error: saveError instanceof Error ? saveError.message : String(saveError),
-          });
-        }
-
+        finalAssistantSnapshot = buildAssistantSnapshot("error");
         write({ type: "error", message: assistantError });
       } finally {
         controller.close();
       }
     },
+  });
+
+  after(async () => {
+    const snapshot = finalAssistantSnapshot;
+    if (!snapshot) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    try {
+      // 保证同一 assistant 的 running 先于终态进入 Stream，避免极快响应造成状态倒序。
+      await initialSnapshotPersistence;
+      const queueId = await persistSnapshot(snapshot);
+      console.info("assistant message persistence scheduled", {
+        assistantId: snapshot.id,
+        conversationId: snapshot.conversationId,
+        status: snapshot.status,
+        queueId,
+        latencyMs: Date.now() - startedAt,
+      });
+    } catch (error) {
+      console.error("assistant message persistence failed", {
+        assistantId: snapshot.id,
+        conversationId: snapshot.conversationId,
+        status: snapshot.status,
+        contentLength: snapshot.content.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   return new Response(stream, {

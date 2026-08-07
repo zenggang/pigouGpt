@@ -60,6 +60,7 @@ DATABASE_API_BASE_URL=https://your-private-db-api.example.com
 - `GET /image-jobs/:jobId`：Vercel 轮询任务状态，前端展示“思考中”、完成图片或错误提示。
 - `POST /images`：只允许服务端带 `DATABASE_API_KEY` 上传图片文件。
 - `GET /images/:fileName`：浏览器展示历史图片。
+- `POST /message-snapshots`：把文本问答快照写入本机 Redis Stream，consumer group 异步持久化到 MySQL。
 
 数据库 API 反向代理的请求体限制需要大于生成图 base64，建议至少配置为 `8m`。
 
@@ -75,7 +76,12 @@ MYSQL_PORT=3306
 MYSQL_DATABASE=your_app_database
 MYSQL_USER=<最小权限 MySQL 账号>
 MYSQL_PASSWORD=<MySQL 密码>
+REDIS_URL=redis://127.0.0.1:6379
+PIGOU_MESSAGE_SNAPSHOT_STREAM=pigou:message-snapshots
+PIGOU_MESSAGE_SNAPSHOT_GROUP=pigou-db-api
 ```
+
+文本问答的 SSE 正文和终止事件不等待 MySQL。ECS Redis 必须仅监听本机并开启 AOF；队列消息只有在 MySQL 事务提交后才 `XACK`，服务重启后会先认领并重试 pending 消息。
 
 后续新增账号不走注册页，直接在 MySQL `users` 表插入或更新启用账号。
 
