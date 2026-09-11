@@ -1,9 +1,10 @@
 import type { ClientImageAttachment } from "./image-attachments";
 
-export const PIGOU_MODELS = ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"] as const;
+export const PIGOU_MODELS = ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"] as const;
 export type PigouModel = (typeof PIGOU_MODELS)[number];
-export const DEFAULT_PIGOU_MODEL: PigouModel = "gpt-5.6-sol";
+export const DEFAULT_PIGOU_MODEL: PigouModel = "gpt-6-astra";
 export type ReasoningEffort = "low" | "medium" | "high";
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "high";
 
 export type ChatRole = "user" | "assistant";
 

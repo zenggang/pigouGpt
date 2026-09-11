@@ -11,7 +11,7 @@ import {
   normalizeClientImageAttachments,
   summarizeImageAttachments,
 } from "./image-attachments";
-import { PIGOU_MODELS } from "./types";
+import { DEFAULT_REASONING_EFFORT, PIGOU_MODELS } from "./types";
 import type {
   ChatMode,
   ChatRequest,
@@ -44,7 +44,7 @@ export function validateChatRequest(payload: unknown): ChatRequest {
   const input = payload as Partial<ChatRequest>;
 
   if (!input.model || !PIGOU_MODELS.includes(input.model)) {
-    throw new Error("当前支持 GPT-5.6、GPT-5.5 和 GPT-5.4。");
+    throw new Error("当前支持 GPT-6、GPT-5.6、GPT-5.5 和 GPT-5.4。");
   }
 
   if (!Array.isArray(input.messages) || input.messages.length === 0) {
@@ -367,7 +367,7 @@ function buildUpstreamBody(request: ChatRequest, stream: boolean) {
         : buildConversationInput(request.messages),
     reasoning: request.options?.showThinking
       ? {
-          effort: request.options.reasoningEffort ?? "medium",
+          effort: request.options.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
           summary: "auto",
         }
       : undefined,
@@ -510,7 +510,7 @@ function hasSearchIntent(text: string) {
 }
 
 function normalizeReasoningEffort(value: unknown): ReasoningEffort {
-  return value === "low" || value === "medium" || value === "high" ? value : "medium";
+  return value === "low" || value === "medium" || value === "high" ? value : DEFAULT_REASONING_EFFORT;
 }
 
 async function safeJson(response: Response): Promise<unknown> {

@@ -15,7 +15,7 @@
     "verify:stream-ui-state": "node scripts/verify-stream-ui-state.mjs",
     "verify:message-snapshot-queue": "node scripts/verify-message-snapshot-queue.mjs",
     "verify:message-snapshot-queue:integration": "node scripts/integration-message-snapshot-queue.mjs",
-    "verify:gpt-5-6-default": "node scripts/verify-gpt-5-6-default.mjs",
+    "verify:model-defaults": "node scripts/verify-model-defaults.mjs",
     "db:setup": "node scripts/setup-db.mjs"
   },
   "dependencies": {

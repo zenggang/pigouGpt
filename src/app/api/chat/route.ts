@@ -4,6 +4,7 @@ import {
 } from "@/lib/sub2api";
 import { after } from "next/server";
 import type { ClientMessage, NormalizedEvent } from "@/lib/types";
+import { DEFAULT_REASONING_EFFORT } from "@/lib/types";
 import { AuthRequiredError, requireCurrentUser, type AuthUser } from "@/lib/auth";
 import {
   assertConversationOwner,
@@ -96,7 +97,7 @@ export async function POST(request: Request) {
         // 图片任务在 ECS 异步执行，必须把最近上下文压进 prompt，否则 worker 只能看到“画一张图”这类指代句。
         prompt: buildContextualImagePrompt(chatRequest.messages),
         model: chatRequest.model,
-        reasoningEffort: chatRequest.options?.reasoningEffort ?? "low",
+        reasoningEffort: chatRequest.options?.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
       });
 
       return createSseResponse([

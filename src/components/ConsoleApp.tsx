@@ -33,7 +33,7 @@ import {
 } from "@/lib/image-attachments";
 import { extractVisibleThinkingFromContent } from "@/lib/thinking";
 import { mergeStreamingTextDelta } from "@/lib/streaming-message.mjs";
-import { DEFAULT_PIGOU_MODEL, PIGOU_MODELS, type PigouModel } from "@/lib/types";
+import { DEFAULT_PIGOU_MODEL, DEFAULT_REASONING_EFFORT, PIGOU_MODELS, type PigouModel } from "@/lib/types";
 import { BrandMark } from "./BrandMark";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -142,10 +142,10 @@ type ConsoleAppProps = {
   initialConversations: ConversationSummary[];
 };
 
-const SETTINGS_KEY = "pigou-ai-console-settings-v2";
-const LEGACY_SETTINGS_KEY = "pigou-ai-console-settings-v1";
+const SETTINGS_KEY = "pigou-ai-console-settings-v3";
 const CONVERSATION_CACHE_KEY_PREFIX = "pigou-ai-console-conversation-cache-v1";
 const MODEL_LABELS: Record<Model, string> = {
+  "gpt-6-astra": "GPT-6",
   "gpt-5.6-sol": "GPT-5.6",
   "gpt-5.5": "GPT-5.5",
   "gpt-5.4": "GPT-5.4",
@@ -182,7 +182,7 @@ export function ConsoleApp({
   });
   const [input, setInput] = useState("");
   const [model, setModel] = useState<Model>(DEFAULT_PIGOU_MODEL);
-  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>("medium");
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
   const [runningConversations, setRunningConversations] = useState<
     Record<string, RunningConversation>
   >({});
@@ -2090,7 +2090,7 @@ function readStoredSettings(): {
 } {
   const fallback: { model: Model; reasoningEffort: ReasoningEffort } = {
     model: DEFAULT_PIGOU_MODEL,
-    reasoningEffort: "medium",
+    reasoningEffort: DEFAULT_REASONING_EFFORT,
   };
 
   if (typeof window === "undefined") {
@@ -2099,29 +2099,11 @@ function readStoredSettings(): {
 
   const stored = window.localStorage.getItem(SETTINGS_KEY);
   if (!stored) {
-    const legacyStored = window.localStorage.getItem(LEGACY_SETTINGS_KEY);
-    if (!legacyStored) {
-      return fallback;
-    }
-
-    try {
-      const parsed = JSON.parse(legacyStored) as {
-        reasoningEffort?: ReasoningEffort;
-      };
-      const migrated = {
-        model: DEFAULT_PIGOU_MODEL,
-        reasoningEffort: isReasoningEffort(parsed.reasoningEffort)
-          ? parsed.reasoningEffort
-          : fallback.reasoningEffort,
-      };
-      // 旧设置中的模型只忽略一次，确保所有存量用户升级后默认切到 GPT-5.6，后续手动选择仍按 V2 设置持久化。
-      window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(migrated));
-      window.localStorage.removeItem(LEGACY_SETTINGS_KEY);
-      return migrated;
-    } catch {
-      window.localStorage.removeItem(LEGACY_SETTINGS_KEY);
-      return fallback;
-    }
+    // V1/V2 用户只迁移一次到 GPT-6 / 高推理，之后保留 V3 中的手动选择。
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(fallback));
+    window.localStorage.removeItem("pigou-ai-console-settings-v2");
+    window.localStorage.removeItem("pigou-ai-console-settings-v1");
+    return fallback;
   }
 
   try {

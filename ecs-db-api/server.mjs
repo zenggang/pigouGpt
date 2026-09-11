@@ -327,7 +327,7 @@ async function ensureSchema() {
       assistant_message_id varchar(64) not null,
       prompt longtext not null,
       model varchar(32) not null,
-      reasoning_effort varchar(32) not null default 'low',
+      reasoning_effort varchar(32) not null default 'high',
       status varchar(32) not null default 'queued',
       error_message varchar(500) null,
       images_json longtext null,
@@ -354,7 +354,7 @@ function normalizeImageJobPayload(body) {
   const assistantMessageId = String(payload.assistantMessageId ?? "").trim();
   const prompt = String(payload.prompt ?? "").trim();
   const model = String(payload.model ?? "").trim();
-  const reasoningEffort = String(payload.reasoningEffort ?? "low").trim();
+  const reasoningEffort = String(payload.reasoningEffort ?? "high").trim();
 
   if (
     !isValidId(id) ||
@@ -363,7 +363,7 @@ function normalizeImageJobPayload(body) {
     !isValidId(conversationId) ||
     !isValidId(assistantMessageId) ||
     !prompt ||
-    !["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"].includes(model) ||
+    !["gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"].includes(model) ||
     !["low", "medium", "high"].includes(reasoningEffort)
   ) {
     return null;
